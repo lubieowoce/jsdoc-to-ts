@@ -1,0 +1,28 @@
+{
+  "name": "jsdoc-to-ts",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@9.8.0+sha512.8e4c3550fb500e808dbc30bb0ce4dd1eb614e30b1c55245f211591ec2cdf9c611cabd34e1364b42f564bd54b3945ed0f49d61d1bbf2ec9bd74b866fcdc723276",
+  "devDependencies": {
+    "@types/babel__core": "^7.20.5",
+    "@types/babel__generator": "^7.27.0",
+    "@types/node": "^22.15.8",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@babel/core": "^7.27.1",
+    "@babel/generator": "^7.27.1",
+    "@babel/preset-typescript": "^7.27.1",
+    "@es-joy/jsdoccomment": "0.41.0",
+    "@types/minimist": "^1.2.5",
+    "minimist": "^1.2.8"
+  }
+}
