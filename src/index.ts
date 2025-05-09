@@ -35,10 +35,10 @@ async function main() {
           // },
           VariableDeclaration(path) {
             if (path.node.leadingComments) {
-              const typeAnnotationStr = extractSimpleTypeFromComments(
+              const typeAnnotation = extractSimpleTypeFromComments(
                 path.node.leadingComments
               );
-              if (typeAnnotationStr) {
+              if (typeAnnotation) {
                 // if there's multiple declarators, the type comment applies to the first one
                 const firstDeclaration = path.get("declarations.0");
                 const idPath = firstDeclaration.get("id");
@@ -46,9 +46,8 @@ async function main() {
                   (idPath.isIdentifier() || idPath.isPattern()) &&
                   !idPath.node.typeAnnotation
                 ) {
-                  idPath.node.typeAnnotation = types.tsTypeAnnotation(
-                    parseAsType(typeAnnotationStr)
-                  );
+                  idPath.node.typeAnnotation =
+                    types.tsTypeAnnotation(typeAnnotation);
                 }
               }
             }
@@ -60,13 +59,12 @@ async function main() {
               !idPath.node.typeAnnotation
             ) {
               if (path.node.leadingComments) {
-                const typeAnnotationStr = extractSimpleTypeFromComments(
+                const typeAnnotation = extractSimpleTypeFromComments(
                   path.node.leadingComments
                 );
-                if (typeAnnotationStr) {
-                  idPath.node.typeAnnotation = types.tsTypeAnnotation(
-                    parseAsType(typeAnnotationStr)
-                  );
+                if (typeAnnotation) {
+                  idPath.node.typeAnnotation =
+                    types.tsTypeAnnotation(typeAnnotation);
                 }
               }
             }
@@ -75,15 +73,12 @@ async function main() {
             // cast: `/** @type {Foo} */ (foo)`
             debug?.("ParenthesizedExpression", path.node.leadingComments);
             if (path.node.leadingComments) {
-              const typeAnnotationStr = extractSimpleTypeFromComments(
+              const typeAnnotation = extractSimpleTypeFromComments(
                 path.node.leadingComments
               );
-              if (typeAnnotationStr) {
+              if (typeAnnotation) {
                 path.replaceWith(
-                  types.tsAsExpression(
-                    path.node.expression,
-                    parseAsType(typeAnnotationStr)
-                  )
+                  types.tsAsExpression(path.node.expression, typeAnnotation)
                 );
               }
             }
@@ -97,31 +92,41 @@ async function main() {
 
 function extractSimpleTypeFromComments(comments: types.Comment[] | undefined) {
   if (!comments) return undefined;
-  let typeAnnotationStr: string | undefined;
   for (let i = comments.length - 1; i >= 0; i--) {
     const comment = comments[i];
-    if (comment.type === "CommentBlock" && !typeAnnotationStr) {
-      const parsed = CommentParser.parseComment(comment);
-      const [maybeTypeComment, rest] = pickFirst(
-        parsed.tags,
-        (tag) => tag.tag === "type"
-      );
-      if (maybeTypeComment) {
-        typeAnnotationStr = maybeTypeComment.type;
-        if (rest.length === 0) {
-          comments[i].ignore = true;
-        } else {
-          parsed.tags = rest;
-          comment.value = CommentParser.estreeToString(
-            CommentParser.commentParserToESTree(parsed, "jsdoc", {
-              throwOnTypeParsingErrors: false,
-            })
-          );
-        }
-      }
+    if (comment.type !== "CommentBlock") continue;
+
+    const parsed = CommentParser.parseComment(comment);
+    const [maybeTypeComment, rest] = pickFirst(
+      parsed.tags,
+      (tag) => tag.tag === "type"
+    );
+    if (!maybeTypeComment) continue;
+
+    let typeAnnotation: types.TSType;
+    try {
+      typeAnnotation = parseAsType(maybeTypeComment.type);
+    } catch (err) {
+      // if we failed to parse this type annotation, bail out.
+      console.error(err);
+      return undefined;
     }
+
+    // strip the @type comment.
+    if (rest.length === 0) {
+      comments[i].ignore = true;
+    } else {
+      parsed.tags = rest;
+      comment.value = CommentParser.estreeToString(
+        CommentParser.commentParserToESTree(parsed, "jsdoc", {
+          throwOnTypeParsingErrors: false,
+        })
+      );
+    }
+    // TODO: warn about multiple @type annotations
+    return typeAnnotation;
   }
-  return typeAnnotationStr;
+  return undefined;
 }
 
 function parseAsType(typeStr: string) {
