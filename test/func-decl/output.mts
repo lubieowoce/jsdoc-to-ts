@@ -1,16 +1,39 @@
+function functionDeclaration(a: number, b: string): string {
+  return "foo";
+}
+function genericFunctionDeclaration<T extends Record<string, any>>(a: T, b: T) {
+  return "foo";
+}
+
+//==========================================
+
 /**
- * @returns {string}
- * @param {number} a
- * */
-function functionDeclaration(a, /** @type {string} */ b) {
+ * @param {string} [a] - the first value.
+ */
+function withOptionalParam(a?: string) {
+  return a;
+}
+
+/**
+ * @param {string} [a] - the first value.
+ */
+function withOptionalParamAndDefault(a: string = "default") {
+  return a;
+}
+
+//==========================================
+
+/**
+ * @param {string} a - the first value.
+ */
+function withExtraComments(a: string, /** the other value. */ b: number) {
   return "foo";
 }
 
 /**
- * @template T
- * @param {T} a
- * */
-function genericFunctionDeclaration(a, /** @type {T} */ b) {
+ * @param a - the first value.
+ */
+function withoutTypes(a, /** the other value. */ b) {
   return "foo";
 }
 

@@ -1,4 +1,4 @@
-import { transformAsync, types, parseSync } from "@babel/core";
+import { transformAsync, types, parseSync, type NodePath } from "@babel/core";
 import { generate } from "@babel/generator";
 import minimist from "minimist";
 import * as fs from "node:fs";
@@ -67,10 +67,137 @@ async function main() {
           //   debug?.("ExportDeclaration", path.node.leadingComments);
           // },
           // Declaration(path) {},
-          // FunctionDeclaration(path) {
-          //   debug?.("FunctionDeclaration", path.node.leadingComments);
-          //   path.node.typeParameters
-          // },
+          FunctionDeclaration(path) {
+            if (!path.node.leadingComments) return;
+
+            for (const comment of path.node.leadingComments) {
+              if (comment.ignore) continue;
+              if (comment.type !== "CommentBlock") continue;
+
+              // if we can't parse the JSDoc comment, warn and continue.
+              let parsedJsdoc: ReturnType<typeof CommentParser.parseComment>;
+              try {
+                parsedJsdoc = CommentParser.parseComment(comment);
+              } catch (err) {
+                console.error("Failed to parse JSDoc comment", comment.value);
+                return;
+              }
+              if (!parsedJsdoc.tags.length) continue;
+
+              // @template
+              (() => {
+                const [templateTypeParams, takeUsedLines] = parseTemplateTags(
+                  comment,
+                  parsedJsdoc
+                );
+                if (!templateTypeParams.length) {
+                  return null;
+                }
+                takeUsedLines();
+                path.node.typeParameters =
+                  types.tsTypeParameterDeclaration(templateTypeParams);
+              })();
+
+              // @returns
+              const returnType = (() => {
+                const returnsTag = parsedJsdoc.tags.find(
+                  (tag) => tag.tag === "returns"
+                );
+                if (!returnsTag) return null;
+
+                let returnType: types.TSType;
+                try {
+                  returnType = parseAsType(returnsTag.type);
+                } catch (err) {
+                  console.error(
+                    "Failed to parse type in @returns tag\n:" + comment.value
+                  );
+                  return null;
+                }
+                // if there's a description, keep the tag.
+                if (!returnsTag.description) {
+                  stripUsedLinesFromComment(comment, parsedJsdoc, [returnsTag]);
+                }
+                return returnType;
+              })();
+              if (returnType) {
+                path.node.returnType = types.tsTypeAnnotation(returnType);
+              }
+
+              // @param and inline @type
+              (() => {
+                const [paramTags] = pick(
+                  parsedJsdoc.tags,
+                  (tag) => tag.tag === "param"
+                );
+
+                const paramTagsByName = new Map(
+                  paramTags.map(
+                    (paramTag) => [paramTag.name, paramTag] as const
+                  )
+                );
+                const usedLines: typeof paramTags = [];
+                for (const paramPath of path.get("params")) {
+                  const paramLhs = paramPath.isAssignmentPattern()
+                    ? paramPath.get("left")
+                    : paramPath;
+                  const paramIdent = paramLhs.isIdentifier() ? paramLhs : null;
+
+                  // TODO: warn if we get both @type and @param
+                  let paramType: types.TSType | null = null;
+                  if (paramIdent) {
+                    const tagForParam = paramTagsByName.get(
+                      paramIdent.node.name
+                    );
+                    if (tagForParam) {
+                      let paramTypeFromParamTag: types.TSType;
+                      try {
+                        paramTypeFromParamTag = parseAsType(tagForParam.type);
+                      } catch (err) {
+                        console.error(
+                          "Failed to parse type in @param tag:\n" +
+                            comment.value
+                        );
+                        continue;
+                      }
+
+                      if (
+                        tagForParam.optional &&
+                        !paramPath.isAssignmentPattern()
+                      ) {
+                        paramPath.node.optional = true;
+                      }
+
+                      // if there's a description or a default annotation, keep the tag.
+                      // TODO: replace the tag with a type-less @param instead
+                      if (!tagForParam.description && !tagForParam.default) {
+                        usedLines.push(tagForParam);
+                      }
+                      paramType = paramTypeFromParamTag;
+                    }
+                  }
+                  // if we didn't get anything from `@param` tags on the function definition, try inline `@type` on the parameter itself.
+                  if (!paramType) {
+                    paramType = extractSimpleTypeFromComments(
+                      paramPath.node.leadingComments
+                    );
+                  }
+
+                  if (paramType) {
+                    const node = paramLhs.node;
+                    if (
+                      // these shouldn't be syntactically valid in a param, but otherwise TS complains
+                      !types.isMemberExpression(node) &&
+                      !types.isTSNonNullExpression(node)
+                    ) {
+                      node.typeAnnotation = types.tsTypeAnnotation(paramType);
+                    }
+                  }
+                }
+                stripUsedLinesFromComment(comment, parsedJsdoc, usedLines);
+              })();
+            }
+          },
 
           Statement(path) {
             if (!path.node.leadingComments) return;
@@ -316,8 +443,10 @@ function parseTemplateTags(
   return [typeParams, takeUsedLines];
 }
 
-function extractSimpleTypeFromComments(comments: types.Comment[] | undefined) {
-  if (!comments) return undefined;
+function extractSimpleTypeFromComments(
+  comments: types.Comment[] | null | undefined
+): types.TSType | null {
+  if (!comments) return null;
   for (let i = comments.length - 1; i >= 0; i--) {
     const comment = comments[i];
     if (comment.type !== "CommentBlock" || comment.ignore) continue;
@@ -328,7 +457,7 @@ function extractSimpleTypeFromComments(comments: types.Comment[] | undefined) {
       parsedJsdoc = CommentParser.parseComment(comment);
     } catch (err) {
       console.error("Failed to parse JSDoc comment", comment.value);
-      return;
+      return null;
     }
 
     if (!parsedJsdoc.tags.length) continue;
@@ -346,15 +475,21 @@ function extractSimpleTypeFromComments(comments: types.Comment[] | undefined) {
     } catch (err) {
       // if we failed to parse this type annotation, bail out.
       console.error(err);
-      return undefined;
+      return null;
     }
 
-    // strip the @type comment.
+    // strip the @type comment
     stripUsedLinesFromComment(comment, parsedJsdoc, [maybeTypeComment]);
+    // if there was a description, preserve it.
+    if (maybeTypeComment.description) {
+      comment.ignore = false;
+      comment.value = "* " + maybeTypeComment.description;
+    }
+
     // TODO: warn about multiple @type annotations
     return typeAnnotation;
   }
-  return undefined;
+  return null;
 }
 
 function stripUsedLinesFromComment(

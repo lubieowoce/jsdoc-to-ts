@@ -49,22 +49,9 @@ text_green=$'\033[32m'
 text_blue=$'\033[94m'
 text_reset=$'\033[0m'
 
-
-for input_file in "${input_files[@]}"; do
-  output_file="$(sed -E 's/input\.mjs$/output.mts/' <<< "$input_file" )"
-
-  tmp_dir="$(mktemp -d)"
-  tmp_file="$tmp_dir/output.mts"
-
-  node --experimental-strip-types --disable-warning=ExperimentalWarning \
-    src/index.ts "$input_file" > "$tmp_file"
-
-  pnpm prettier --write "$tmp_file" --log-level=error
-
-  if [ "${#input_files[@]}" -eq 1 ]; then
-    cat "$tmp_file"
-  fi
-
+function write-snapshot {
+  local output_file="$1"
+  local tmp_file="$2"
   if ! [ -f "$output_file" ]; then
     echo "${text_blue}[NEW]   ${text_reset} $output_file" >&2
     cp "$tmp_file" "$output_file"
@@ -87,6 +74,32 @@ for input_file in "${input_files[@]}"; do
     else
       echo "${text_green}[PASS]  ${text_reset} $output_file" >&2
     fi
+  fi
+}
+
+for input_file in "${input_files[@]}"; do
+  output_file="$(sed -E 's/input\.mjs$/output.mts/' <<< "$input_file" )"
+  output_stderr_file="${output_file}.stderr"
+
+  tmp_dir="$(mktemp -d)"
+  tmp_file="$tmp_dir/output.mts"
+  tmp_stderr_file="$tmp_dir/output.mts.stderr"
+
+  node --experimental-strip-types --disable-warning=ExperimentalWarning \
+    src/index.ts "$input_file" > "$tmp_file" 2> "$tmp_stderr_file"
+
+  pnpm prettier --write "$tmp_file" --log-level=error
+
+  if [ "${#input_files[@]}" -eq 1 ]; then
+    cat "$tmp_file"
+  fi
+  write-snapshot "$output_file" "$tmp_file"
+  if [ -f "$output_file" ] && ! [ -f "$output_stderr_file" ]; then
+    touch "$output_stderr_file"
+  fi
+  write-snapshot "$output_stderr_file" "$tmp_stderr_file"
+  if [ -f "$output_stderr_file" ] && ! [ -s "$output_stderr_file" ]; then
+    rm "$output_stderr_file"
   fi
 done
 
