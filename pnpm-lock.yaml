@@ -26,6 +26,9 @@ importers:
       '@types/parsimmon':
         specifier: ^1.10.9
         version: 1.10.9
+      comment-parser:
+        specifier: ^1.4.1
+        version: 1.4.1
       minimist:
         specifier: ^1.2.8
         version: 1.2.8

@@ -4,6 +4,7 @@ import minimist from "minimist";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as CommentParser from "@es-joy/jsdoccomment";
+import { stringify as stringifyComment } from "comment-parser";
 import {
   templateTagContentsParser,
   typedefTagContentsParser,
@@ -115,7 +116,7 @@ async function main() {
                   return null;
                 }
                 // if there's a description, keep the tag.
-                if (!returnsTag.description) {
+                if (!isNonEmptyDescription(returnsTag.description)) {
                   stripUsedLinesFromComment(comment, parsedJsdoc, [returnsTag]);
                 }
                 return returnType;
@@ -130,12 +131,17 @@ async function main() {
                   (tag) => tag.tag === "param"
                 );
 
-                const paramTagsByName = new Map(
-                  paramTags.map(
-                    (paramTag) => [paramTag.name, paramTag] as const
-                  )
-                );
                 const usedLines: typeof paramTags = [];
+
+                const paramTagsByName = new Map(
+                  paramTags
+                    .filter((paramTag) => !isNestedParamName(paramTag.name))
+                    .map((paramTag) => [paramTag.name, paramTag] as const)
+                );
+
+                const [nestedParams, takeNestedParamLines] =
+                  parseNestedParamDeclarations(comment, parsedJsdoc);
+
                 for (const paramPath of path.get("params")) {
                   const paramLhs = paramPath.isAssignmentPattern()
                     ? paramPath.get("left")
@@ -145,9 +151,8 @@ async function main() {
                   // TODO: warn if we get both @type and @param
                   let paramType: types.TSType | null = null;
                   if (paramIdent) {
-                    const tagForParam = paramTagsByName.get(
-                      paramIdent.node.name
-                    );
+                    const paramName = paramIdent.node.name;
+                    const tagForParam = paramTagsByName.get(paramName);
                     if (tagForParam) {
                       let paramTypeFromParamTag: types.TSType;
                       try {
@@ -157,11 +162,28 @@ async function main() {
                           "Failed to parse type in @param tag:\n" +
                             comment.value
                         );
-                        continue;
+                        return null;
+                      }
+
+                      // if we have some nested `@param {...} paramName.prop` declarations for this param,
+                      // replace the param's type with the object they describe.
+                      const nested = nestedParams?.get(paramName);
+                      if (nested) {
+                        if (
+                          !canTypeHaveNestedProperties(paramTypeFromParamTag)
+                        ) {
+                          console.error(
+                            `a \`@param\` with nested \`@param\` declarations must be of type \`object\` or \`Object\` t\n` +
+                              comment.value
+                          );
+                          return null;
+                        }
+                        paramTypeFromParamTag = types.tsTypeLiteral(nested);
                       }
 
                       if (
                         tagForParam.optional &&
+                        // if the param is assigned a default value, it shouldn't have a `?`
                         !paramPath.isAssignmentPattern()
                       ) {
                         paramPath.node.optional = true;
@@ -169,8 +191,13 @@ async function main() {
 
                       // if there's a description or a default annotation, keep the tag.
                       // TODO: replace the tag with a type-less @param instead
-                      if (!tagForParam.description && !tagForParam.default) {
+                      if (
+                        !isNonEmptyDescription(tagForParam.description) &&
+                        !tagForParam.default
+                      ) {
                         usedLines.push(tagForParam);
+                      } else {
+                        debug?.(tagForParam);
                       }
                       paramType = paramTypeFromParamTag;
                     }
@@ -193,6 +220,7 @@ async function main() {
                     }
                   }
                 }
+                takeNestedParamLines();
                 stripUsedLinesFromComment(comment, parsedJsdoc, usedLines);
               })();
             }
@@ -330,14 +358,7 @@ function extractTypedef(
   );
   if (propertyDefs.length) {
     // `@property` defs are only valid if the type is `object` or `Object`
-    if (
-      !(
-        types.isTSObjectKeyword(rhs) ||
-        (types.isTSTypeReference(rhs) &&
-          types.isIdentifier(rhs.typeName) &&
-          rhs.typeName.name === "Object")
-      )
-    ) {
+    if (!canTypeHaveNestedProperties(rhs)) {
       console.error(
         `@typedef type must be \`object\` or \`Object\` when using @prop/@property\n` +
           comment.value
@@ -386,6 +407,16 @@ function extractTypedef(
   return decl;
 }
 
+function canTypeHaveNestedProperties(type: types.TSType) {
+  // `@property` defs are only valid if the type is `object` or `Object`
+  return (
+    types.isTSObjectKeyword(type) ||
+    (types.isTSTypeReference(type) &&
+      types.isIdentifier(type.typeName) &&
+      type.typeName.name === "Object")
+  );
+}
+
 function parsePropertyDeclarations(
   comment: types.Comment,
   parsedJsdoc: CommentParser.JsdocBlockWithInline
@@ -397,29 +428,12 @@ function parsePropertyDeclarations(
 
   try {
     const propDefs = propTags.map((propTag) => {
-      {
-        // commentparser doesn't handle `@property {number=} foo`
-        // (but it does handle `@property {number=DEFAULT_VALUE} foo`)
-        const match = propTag.type.match(/^(.*?)\s*=\s*$/);
-        if (match) {
-          propTag.type = match[1];
-          propTag.optional = true;
-        }
-      }
-
-      const propDef = types.tSPropertySignature(
-        types.identifier(propTag.name),
-        types.tsTypeAnnotation(parseAsType(propTag.type))
+      const propDef = createPropertyDeclaration(
+        propTag.name,
+        propTag.type,
+        propTag.optional,
+        propTag.description
       );
-      if (propTag.optional) {
-        propDef.optional = true;
-      }
-      if (propTag.description) {
-        addLeadingCommentWithForcedLinebreak(
-          propDef,
-          cleanDescriptionFromComment(propTag.description)
-        );
-      }
       usedLines.push(propTag);
       return propDef;
     });
@@ -428,13 +442,104 @@ function parsePropertyDeclarations(
     return [propDefs, takeUsedLines] as const;
   } catch (err) {
     console.error(
-      new Error("Failed to parse types in @property tag:\n" + comment.value, {
-        cause: err,
-      })
+      new Error(
+        "Failed to parse types in @prop/@property tag:\n" + comment.value,
+        {
+          cause: err,
+        }
+      )
     );
     return [[], () => {}] as const;
   }
 }
+
+function isNestedParamName(name: string) {
+  return name.includes(".");
+}
+
+function parseNestedParamDeclarations(
+  comment: types.Comment,
+  parsedJsdoc: CommentParser.JsdocBlockWithInline
+): [Map<string, types.TSPropertySignature[]>, () => void] | [null, () => void] {
+  const paramTags = parsedJsdoc.tags.filter(
+    (tag) => tag.tag === "param" && isNestedParamName(tag.name)
+  );
+  const usedLines: typeof paramTags = [];
+
+  const nestedParams = new Map<string, types.TSPropertySignature[]>();
+
+  try {
+    for (const paramTag of paramTags) {
+      const [paramName, propName, ...rest] = paramTag.name.split(".");
+      if (rest.length > 0) {
+        console.error(
+          "Not implemented - multiple levels of @param nesting:\n" +
+            comment.value
+        );
+        return [null, () => {}];
+      }
+      let arr = nestedParams.get(paramName);
+      if (!arr) {
+        nestedParams.set(paramName, (arr = []));
+      }
+      const propDef = createPropertyDeclaration(
+        propName,
+        paramTag.type,
+        paramTag.optional,
+        paramTag.description
+      );
+      usedLines.push(paramTag);
+      arr.push(propDef);
+    }
+    const takeUsedLines = () =>
+      stripUsedLinesFromComment(comment, parsedJsdoc, usedLines);
+    return [nestedParams, takeUsedLines] as const;
+  } catch (err) {
+    console.error(
+      new Error(`Failed to parse types in @param tag:\n` + comment.value, {
+        cause: err,
+      })
+    );
+    return [null, () => {}];
+  }
+}
+
+function createPropertyDeclaration(
+  name: string,
+  rawType: string,
+  optional: boolean,
+  description: string | undefined
+) {
+  // commentparser doesn't handle `@property {number=} foo`
+  {
+    // (but it does handle `@property {number=DEFAULT_VALUE} foo`)
+    const match = rawType.match(/^(.*?)\s*=\s*$/);
+    if (match) {
+      rawType = match[1];
+      optional = true;
+    }
+  }
+
+  const propDef = types.tSPropertySignature(
+    types.identifier(name),
+    types.tsTypeAnnotation(parseAsType(rawType))
+  );
+  if (optional) {
+    propDef.optional = true;
+  }
+  if (description && isNonEmptyDescription(description)) {
+    addLeadingCommentWithForcedLinebreak(
+      propDef,
+      cleanDescriptionFromComment(description)
+    );
+  }
+  return propDef;
+}
+
+function isNonEmptyDescription(description: string) {
+  return !!description && !WHITESPACE_OR_EMPTY.test(description);
+}
+const WHITESPACE_OR_EMPTY = /^\s*$/;
 
 const FORCED_LINEBREAK_MARKER = "__JSDOC_TO_TS_FORCE_LINEBREAK__";
 const FORCED_LINEBREAK_MARKER_COMMENT_PATTERN = new RegExp(
@@ -526,29 +631,25 @@ function cleanDescriptionFromComment(comment: string) {
   ) {
     comment = comment.slice(2).trim();
   }
-  if (!comment.includes("\n")) {
-    // pad single-line comments with whitespace to make them look nice.
-    // we'll add a leading space below, when adding the `* ` prefixes.
-    if (!comment.endsWith(" ")) {
-      comment = comment + " ";
-    }
-  }
 
-  // we want this to read as a JSDoc comment.
-  if (comment.includes("\n") && !comment.endsWith("\n")) {
-    comment = comment + "\n";
-  }
-  comment = comment
-    .split("\n")
-    .map(
-      (line, i, lines) =>
-        // if we have multiple lines, the last one should be `**/` (because we add an extra newline).
-        // we don't want it to be `* */`, so don't add a space after `*` for that line.
-        (lines.length > 1 && i === lines.length - 1 ? "*" : "* ") + line
-    )
-    .join("\n");
+  return formatTextAsJsDoc(comment);
+}
 
-  return comment;
+function formatTextAsJsDoc(text: string) {
+  if (!text) return text;
+  const lines = text.split("\n");
+  if (lines.length === 1) {
+    return `* ${text.trim()} `;
+  } else {
+    ensureLastJsdocLineIsEmpty(lines);
+    return lines
+      .map((line, i, lines) =>
+        // if we have multiple lines, the last one should be `*/`.
+        // we've already normalized the line to be empty, so we can just skip it.
+        i === lines.length - 1 ? line : "* " + line
+      )
+      .join("\n");
+  }
 }
 
 function extractSimpleTypeFromComments(
@@ -586,9 +687,9 @@ function extractSimpleTypeFromComments(
     // strip the @type comment
     stripUsedLinesFromComment(comment, parsedJsdoc, [typeTag]);
     // if there was a description, preserve it.
-    if (typeTag.description) {
+    if (isNonEmptyDescription(typeTag.description)) {
       comment.ignore = false;
-      comment.value = "* " + typeTag.description;
+      comment.value = cleanDescriptionFromComment(typeTag.description);
     }
 
     // TODO: warn about multiple @type annotations
@@ -624,12 +725,8 @@ function stripUsedLinesFromComment(
     return;
   }
 
-  const asEstTree = CommentParser.commentParserToESTree(parsedJsdoc, "jsdoc", {
-    throwOnTypeParsingErrors: false,
-  });
-  let newCommentStr = CommentParser.estreeToString(asEstTree, {
-    preferRawType: true,
-  });
+  let newCommentStr = stringifyComment(parsedJsdoc);
+
   // remove leading '/*', babel will add that
   const blockCommentStart = "/*";
   const blockCommentEnd = "*/";
@@ -639,7 +736,25 @@ function stripUsedLinesFromComment(
   if (newCommentStr.endsWith(blockCommentEnd)) {
     newCommentStr = newCommentStr.slice(0, -blockCommentEnd.length);
   }
+
+  // multi-line comments should end with an empty line.
+  if (newCommentStr.includes("\n")) {
+    const lines = newCommentStr.split("\n");
+    ensureLastJsdocLineIsEmpty(lines);
+    newCommentStr = lines.join("\n");
+  }
   comment.value = newCommentStr;
+}
+
+function ensureLastJsdocLineIsEmpty(lines: string[]) {
+  const lastLine = lines[lines.length - 1];
+  if (!/^[ \t]*\*?[ \t]*$/.test(lastLine)) {
+    // if the last line isn't empty-ish, add an empty one.
+    lines.push("");
+  } else if (lastLine) {
+    // if the last line is empty-ish but non-empty (e.g. it contains whitespace or a '*'), normalize it to be empty.
+    lines[lines.length - 1] = "";
+  }
 }
 
 function parseAsType(typeStr: string) {

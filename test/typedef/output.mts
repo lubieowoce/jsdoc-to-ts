@@ -11,7 +11,7 @@ export type SpecialType = {
   prop1: string;
   /** a number property of SpecialType.
    * this comment line will also be attached to prop2.
-   **/
+   */
   prop2: number;
   /** an optional number property of SpecialType */
   prop3?: number;
@@ -19,7 +19,7 @@ export type SpecialType = {
   prop4?: number;
   /** an optional number property of SpecialType with default.
    * this comment line will also be attached to prop5.
-   **/
+   */
   prop5?: number;
 };
 const DUMMY2 = 1;

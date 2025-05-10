@@ -25,6 +25,7 @@
     "@es-joy/jsdoccomment": "0.41.0",
     "@types/minimist": "^1.2.5",
     "@types/parsimmon": "^1.10.9",
+    "comment-parser": "^1.4.1",
     "minimist": "^1.2.8",
     "parsimmon": "^1.18.1"
   }
