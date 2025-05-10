@@ -322,7 +322,32 @@ function extractTypedef(
   const [lhs, typeParamsFromLhs] = parseAsTypeDeclarationLhs(
     typedefParsedToStr.lhs
   );
-  const rhs = parseAsType(typedefParsedToStr.rhs);
+  let rhs = parseAsType(typedefParsedToStr.rhs);
+
+  const [propertyDefs, takePropertyDefsLines] = parsePropertyDeclarations(
+    comment,
+    parsedJsdoc
+  );
+  if (propertyDefs.length) {
+    // `@property` defs are only valid if the type is `object` or `Object`
+    if (
+      !(
+        types.isTSObjectKeyword(rhs) ||
+        (types.isTSTypeReference(rhs) &&
+          types.isIdentifier(rhs.typeName) &&
+          rhs.typeName.name === "Object")
+      )
+    ) {
+      console.error(
+        `@typedef type must be \`object\` or \`Object\` when using @prop/@property\n` +
+          comment.value
+      );
+      return null;
+    }
+
+    rhs = types.tsTypeLiteral(propertyDefs);
+  }
+
   const decl = types.tsTypeAliasDeclaration(lhs, typeParamsFromLhs, rhs);
 
   if (!decl.typeParameters?.params?.length && typeParams.length) {
@@ -352,10 +377,63 @@ function extractTypedef(
       param.leadingComments = paramFromTemplate.leadingComments;
     }
   }
+
   // TODO: replace @typedef line with description comment if present
   takeTypeParamLines();
+  takePropertyDefsLines();
   stripUsedLinesFromComment(comment, parsedJsdoc, [typeDef]);
+
   return decl;
+}
+
+function parsePropertyDeclarations(
+  comment: types.Comment,
+  parsedJsdoc: CommentParser.JsdocBlockWithInline
+): [types.TSPropertySignature[], () => void] {
+  const propTags = parsedJsdoc.tags.filter(
+    (tag) => tag.tag === "property" || tag.tag === "prop"
+  );
+  const usedLines: typeof propTags = [];
+
+  try {
+    const propDefs = propTags.map((propTag) => {
+      {
+        // commentparser doesn't handle `@property {number=} foo`
+        // (but it does handle `@property {number=DEFAULT_VALUE} foo`)
+        const match = propTag.type.match(/^(.*?)\s*=\s*$/);
+        if (match) {
+          propTag.type = match[1];
+          propTag.optional = true;
+        }
+      }
+
+      const propDef = types.tSPropertySignature(
+        types.identifier(propTag.name),
+        types.tsTypeAnnotation(parseAsType(propTag.type))
+      );
+      if (propTag.optional) {
+        propDef.optional = true;
+      }
+      if (propTag.description) {
+        addLeadingCommentWithForcedLinebreak(
+          propDef,
+          cleanDescriptionFromComment(propTag.description)
+        );
+      }
+      usedLines.push(propTag);
+      return propDef;
+    });
+    const takeUsedLines = () =>
+      stripUsedLinesFromComment(comment, parsedJsdoc, usedLines);
+    return [propDefs, takeUsedLines] as const;
+  } catch (err) {
+    console.error(
+      new Error("Failed to parse types in @property tag:\n" + comment.value, {
+        cause: err,
+      })
+    );
+    return [[], () => {}] as const;
+  }
 }
 
 const FORCED_LINEBREAK_MARKER = "__JSDOC_TO_TS_FORCE_LINEBREAK__";
@@ -448,16 +526,28 @@ function cleanDescriptionFromComment(comment: string) {
   ) {
     comment = comment.slice(2).trim();
   }
-  // pad the comment with whitespace to make it look nice.
-  if (!comment.startsWith(" ")) {
-    comment = " " + comment;
-  }
-  if (!comment.endsWith(" ")) {
-    comment = comment + " ";
+  if (!comment.includes("\n")) {
+    // pad single-line comments with whitespace to make them look nice.
+    // we'll add a leading space below, when adding the `* ` prefixes.
+    if (!comment.endsWith(" ")) {
+      comment = comment + " ";
+    }
   }
 
   // we want this to read as a JSDoc comment.
-  comment = "*" + comment;
+  if (comment.includes("\n") && !comment.endsWith("\n")) {
+    comment = comment + "\n";
+  }
+  comment = comment
+    .split("\n")
+    .map(
+      (line, i, lines) =>
+        // if we have multiple lines, the last one should be `**/` (because we add an extra newline).
+        // we don't want it to be `* */`, so don't add a space after `*` for that line.
+        (lines.length > 1 && i === lines.length - 1 ? "*" : "* ") + line
+    )
+    .join("\n");
+
   return comment;
 }
 
