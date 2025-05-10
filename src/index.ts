@@ -126,8 +126,7 @@ async function main() {
 
               // @param and inline @type
               (() => {
-                const [paramTags] = pick(
-                  parsedJsdoc.tags,
+                const paramTags = parsedJsdoc.tags.filter(
                   (tag) => tag.tag === "param"
                 );
 
@@ -302,10 +301,8 @@ function extractTypedef(
     comment,
     parsedJsdoc
   );
-  const [typeDef, rest] = pickFirst(
-    parsedJsdoc.tags,
-    (tag) => tag.tag === "typedef"
-  );
+
+  const typeDef = parsedJsdoc.tags.find((tag) => tag.tag === "typedef");
   if (!typeDef) return null;
   const sourceLine = findTagSourceLine(typeDef.source, "typedef")!;
   const typedefContents = getTagContentsFromRawSource(
@@ -367,10 +364,7 @@ function parseTemplateTags(
   // @template {Ext} T        // <T extends Ext>
   // @template [T=Def]        // <T = Def>
   // @template {Ext} [T=Def]  // <T extends Ext = Def>
-  const [templateTags, rest] = pick(
-    parsedJsdoc.tags,
-    (tag) => tag.tag === "template"
-  );
+  const templateTags = parsedJsdoc.tags.filter((tag) => tag.tag === "template");
   const usedLines: typeof templateTags = [];
   const typeParams = templateTags.flatMap((tag) => {
     const rawTagSource = tag.source.find((src) =>
@@ -463,16 +457,13 @@ function extractSimpleTypeFromComments(
 
     if (!parsedJsdoc.tags.length) continue;
 
-    const [maybeTypeComment, rest] = pickFirst(
-      parsedJsdoc.tags,
-      (tag) => tag.tag === "type"
-    );
-    if (!maybeTypeComment) continue;
+    const typeTag = parsedJsdoc.tags.find((tag) => tag.tag === "type");
+    if (!typeTag) continue;
 
     // TODO: map parse error to source location (in comment), e.g. by passing `parserOptions.startIndex`
     let typeAnnotation: types.TSType;
     try {
-      typeAnnotation = parseAsType(maybeTypeComment.type);
+      typeAnnotation = parseAsType(typeTag.type);
     } catch (err) {
       // if we failed to parse this type annotation, bail out.
       console.error(err);
@@ -480,11 +471,11 @@ function extractSimpleTypeFromComments(
     }
 
     // strip the @type comment
-    stripUsedLinesFromComment(comment, parsedJsdoc, [maybeTypeComment]);
+    stripUsedLinesFromComment(comment, parsedJsdoc, [typeTag]);
     // if there was a description, preserve it.
-    if (maybeTypeComment.description) {
+    if (typeTag.description) {
       comment.ignore = false;
-      comment.value = "* " + maybeTypeComment.description;
+      comment.value = "* " + typeTag.description;
     }
 
     // TODO: warn about multiple @type annotations
@@ -561,33 +552,6 @@ function parseAsTypeDeclaration(source: string) {
   const decl = ast.program.body[0];
   types.assertTSTypeAliasDeclaration(decl);
   return decl;
-}
-
-function pickFirst<T>(
-  arr: T[],
-  pred: (value: T) => boolean
-): [yes: T | undefined, no: T[]] {
-  let matched = false;
-  const predOnce = (value: T) => {
-    if (matched) return false;
-    matched = pred(value);
-    return matched;
-  };
-  const [yes, no] = pick(arr, predOnce);
-  return [yes[0], no];
-}
-
-function pick<T>(arr: T[], pred: (value: T) => boolean): [yes: T[], no: T[]] {
-  const yes: T[] = [];
-  const no: T[] = [];
-  for (const value of arr) {
-    if (pred(value)) {
-      yes.push(value);
-    } else {
-      no.push(value);
-    }
-  }
-  return [yes, no];
 }
 
 main();
