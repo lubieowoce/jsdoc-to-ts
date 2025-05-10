@@ -290,7 +290,9 @@ async function main() {
       },
     ],
   });
-  console.log(generate(result!.ast!).code);
+  let output = generate(result!.ast!).code;
+  output = insertForcedLinebreaks(output);
+  console.log(output);
 }
 
 function extractTypedef(
@@ -356,6 +358,22 @@ function extractTypedef(
   return decl;
 }
 
+const FORCED_LINEBREAK_MARKER = "__JSDOC_TO_TS_FORCE_LINEBREAK__";
+const FORCED_LINEBREAK_MARKER_COMMENT_PATTERN = new RegExp(
+  String.raw`[ \t]*//${FORCED_LINEBREAK_MARKER}\n`,
+  "g"
+);
+
+function addLeadingCommentWithForcedLinebreak(node: types.Node, value: string) {
+  types.addComment(node, "leading", FORCED_LINEBREAK_MARKER, true);
+  types.addComment(node, "leading", value, false);
+}
+
+function insertForcedLinebreaks(code: string) {
+  // using a line comment already forced a line break, so we can strip the line itself.
+  return code.replaceAll(FORCED_LINEBREAK_MARKER_COMMENT_PATTERN, "");
+}
+
 function parseTemplateTags(
   comment: types.Comment,
   parsedJsdoc: CommentParser.JsdocBlockWithInline
@@ -396,28 +414,10 @@ function parseTemplateTags(
           res.name
         );
         if (res.comment) {
-          let comment = res.comment;
-
-          // clean up serparators between type param and comment
-          // (not syntactically necessary, but not uncommon)
-          if (
-            comment.startsWith(": ") ||
-            comment.startsWith("- ") ||
-            comment.startsWith(", ")
-          ) {
-            comment = comment.slice(2).trim();
-          }
-          // pad the comment with whitespace to make it look nice.
-          if (!comment.startsWith(" ")) {
-            comment = " " + comment;
-          }
-          if (!comment.endsWith(" ")) {
-            comment = comment + " ";
-          }
-
-          // we want this to read as a JSDoc comment.
-          comment = "*" + comment;
-          types.addComment(node, "leading", comment, false);
+          addLeadingCommentWithForcedLinebreak(
+            node,
+            cleanDescriptionFromComment(res.comment)
+          );
         }
         usedLines.push(tag);
         return node;
@@ -436,6 +436,29 @@ function parseTemplateTags(
   const takeUsedLines = () =>
     stripUsedLinesFromComment(comment, parsedJsdoc, usedLines);
   return [typeParams, takeUsedLines];
+}
+
+function cleanDescriptionFromComment(comment: string) {
+  // clean up serparators between type param and comment
+  // (not syntactically necessary, but not uncommon)
+  if (
+    comment.startsWith(": ") ||
+    comment.startsWith("- ") ||
+    comment.startsWith(", ")
+  ) {
+    comment = comment.slice(2).trim();
+  }
+  // pad the comment with whitespace to make it look nice.
+  if (!comment.startsWith(" ")) {
+    comment = " " + comment;
+  }
+  if (!comment.endsWith(" ")) {
+    comment = comment + " ";
+  }
+
+  // we want this to read as a JSDoc comment.
+  comment = "*" + comment;
+  return comment;
 }
 
 function extractSimpleTypeFromComments(

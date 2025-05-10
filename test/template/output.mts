@@ -17,9 +17,12 @@ export type Foo3<A, B, C extends Record<string, any>, D = string> = [
   D,
 ];
 export type Foo4<
-  /** TrailingCommentA (with some more stuff here) */ A,
-  /** some comments for B. */ B,
+  /** TrailingCommentA (with some more stuff here) */
+  A,
+  /** some comments for B. */
+  B,
   C extends Record<string, any>,
-  /** TrailingCommentD (with some more stuff here) */ D = string,
+  /** TrailingCommentD (with some more stuff here) */
+  D = string,
 > = [A, B, C, D];
 const foo: string | null = null;
