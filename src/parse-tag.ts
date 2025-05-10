@@ -190,10 +190,12 @@ const typedefLhs = P.seq(typedefName, balanced("<", true).fallback(null))
 export const typedefTagContentsParser = P.seq(
   balanced("{", false).desc("typedef type"),
   P.whitespace,
-  typedefLhs
-).map(([typeRhs, , typeLhs]) => ({
+  typedefLhs,
+  P.whitespace.then(P.all).fallback(null).desc("trailing comment after typedef")
+).map(([typeRhs, , typeLhs, description]) => ({
   lhs: typeLhs,
   rhs: typeRhs,
+  description,
 }));
 
 // const debugParse = <T>(parser: P.Parser<T>, input: string) => {

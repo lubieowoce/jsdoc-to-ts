@@ -353,6 +353,7 @@ function extractTypedef(
       param.leadingComments = paramFromTemplate.leadingComments;
     }
   }
+  // TODO: replace @typedef line with description comment if present
   takeTypeParamLines();
   stripUsedLinesFromComment(comment, parsedJsdoc, [typeDef]);
   return decl;
