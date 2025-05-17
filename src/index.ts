@@ -329,6 +329,7 @@ function handleFloatingComments(
       const fullDecl = shouldAddExport
         ? types.exportNamedDeclaration(decl)
         : decl;
+      addTrailingForcedLinebreaks(fullDecl, 1);
 
       let insertedDeclPath: NodePath<typeof fullDecl>;
       if (path.isProgram()) {
@@ -609,13 +610,23 @@ const WHITESPACE_OR_EMPTY = /^\s*$/;
 
 const FORCED_LINEBREAK_MARKER = "__JSDOC_TO_TS_FORCE_LINEBREAK__";
 const FORCED_LINEBREAK_MARKER_COMMENT_PATTERN = new RegExp(
-  String.raw`[ \t]*//${FORCED_LINEBREAK_MARKER}\n`,
+  String.raw`//${FORCED_LINEBREAK_MARKER}\n?`,
   "g"
 );
 
 function addLeadingCommentWithForcedLinebreak(node: types.Node, value: string) {
   types.addComment(node, "leading", FORCED_LINEBREAK_MARKER, true);
   types.addComment(node, "leading", value, false);
+}
+
+function addTrailingForcedLinebreaks(node: types.Node, lines = 0) {
+  // 3 newlines - one gets removed by the regex, second breaks the line, third is extra
+  types.addComment(
+    node,
+    "trailing",
+    FORCED_LINEBREAK_MARKER + "\n\n" + "\n".repeat(lines),
+    true
+  );
 }
 
 function insertForcedLinebreaks(code: string) {

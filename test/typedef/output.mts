@@ -2,6 +2,7 @@
  * This is some kind of description
  */
 export type Foo = Object;
+
 const DUMMY = 1;
 /**
  * A description line at the start.
@@ -22,4 +23,5 @@ export type SpecialType = {
    */
   prop5?: number;
 };
+
 const DUMMY2 = 1;
