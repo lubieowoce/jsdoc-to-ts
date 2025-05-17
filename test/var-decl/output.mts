@@ -31,6 +31,4 @@ function objectPattern() {
 function generic() {
   const map: Map<string, string> = new Map();
 }
-
-/** @type {string | null} */
-export const exported = null;
+export const exported: string | null = null;

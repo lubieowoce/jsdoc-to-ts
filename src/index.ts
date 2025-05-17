@@ -64,14 +64,11 @@ async function main() {
         visitor: {
           // TODO: annotated assignments, e.g. module.exports
           // TODO: `@import` -> `import type`
-          // ExportDeclaration(path) {
-          //   debug?.("ExportDeclaration", path.node.leadingComments);
-          // },
-          // Declaration(path) {},
           FunctionDeclaration(path) {
-            if (!path.node.leadingComments) return;
+            const comments = resolveLeadingComments(path);
+            if (!comments) return;
 
-            for (const comment of path.node.leadingComments) {
+            for (const comment of comments) {
               if (comment.ignore) continue;
               if (comment.type !== "CommentBlock") continue;
 
@@ -227,9 +224,10 @@ async function main() {
           },
 
           Statement(path) {
-            if (!path.node.leadingComments) return;
+            const comments = resolveLeadingComments(path);
+            if (!comments) return;
 
-            for (const comment of path.node.leadingComments) {
+            for (const comment of comments) {
               if (comment.ignore) continue;
               if (comment.type === "CommentLine") {
                 // remove '@ts-check' comments -- we're converting to typescript, so they're redundant.
@@ -265,21 +263,20 @@ async function main() {
           },
 
           VariableDeclaration(path) {
-            if (path.node.leadingComments) {
-              const typeAnnotation = extractSimpleTypeFromComments(
-                path.node.leadingComments
-              );
-              if (typeAnnotation) {
-                // if there's multiple declarators, the type comment applies to the first one
-                const firstDeclaration = path.get("declarations.0");
-                const idPath = firstDeclaration.get("id");
-                if (
-                  (idPath.isIdentifier() || idPath.isPattern()) &&
-                  !idPath.node.typeAnnotation
-                ) {
-                  idPath.node.typeAnnotation =
-                    types.tsTypeAnnotation(typeAnnotation);
-                }
+            const comments = resolveLeadingComments(path);
+            if (!comments) return;
+
+            const typeAnnotation = extractSimpleTypeFromComments(comments);
+            if (typeAnnotation) {
+              // if there's multiple declarators, the type comment applies to the first one
+              const firstDeclaration = path.get("declarations.0");
+              const idPath = firstDeclaration.get("id");
+              if (
+                (idPath.isIdentifier() || idPath.isPattern()) &&
+                !idPath.node.typeAnnotation
+              ) {
+                idPath.node.typeAnnotation =
+                  types.tsTypeAnnotation(typeAnnotation);
               }
             }
           },
@@ -321,6 +318,28 @@ async function main() {
   let output = generate(result!.ast!).code;
   output = insertForcedLinebreaks(output);
   console.log(output);
+}
+
+function resolveLeadingComments(path: NodePath<types.Node>) {
+  const enclosingDeclaration = findEnclosingDeclaration(path);
+  return (
+    path.node.leadingComments ?? enclosingDeclaration?.node.leadingComments
+  );
+}
+
+function findEnclosingDeclaration(path: NodePath<types.Node>) {
+  let parentPath: NodePath<types.Node> | null = path.parentPath;
+  while (parentPath) {
+    // we reached a block, so we're not enclosed in an export declaration.
+    if (parentPath.isBlockParent()) {
+      return null;
+    }
+    // we're enclosed in an export declaration.
+    if (parentPath.isDeclaration()) {
+      return parentPath;
+    }
+    parentPath = parentPath.parentPath;
+  }
 }
 
 function extractTypedef(

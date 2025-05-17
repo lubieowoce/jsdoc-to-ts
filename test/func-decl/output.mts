@@ -72,8 +72,6 @@ function takesOptionalObject(
 ) {}
 
 //==========================================
-
-/** @returns {string} */
-export function exportedFunctionDeclaration() {
+export function exportedFunctionDeclaration(): string {
   return "foo";
 }
