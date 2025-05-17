@@ -12,7 +12,7 @@ if [ -d "$input" ]; then
   fi
 else
   if ! [ -f "$input" ]; then
-    echo "Input file '$input_file' does not exist" >&2
+    echo "Input file '$input' does not exist" >&2
     exit 1
   fi
   input_files=( "$input" )
