@@ -64,6 +64,7 @@ async function main() {
         visitor: {
           // TODO: annotated assignments, e.g. module.exports
           // TODO: `@import` -> `import type`
+          // TODO: `@this`
           Program(path) {
             const comments = path.node.innerComments;
             if (!comments) return;
@@ -71,162 +72,19 @@ async function main() {
           },
 
           FunctionDeclaration(path) {
-            const comments = resolveLeadingComments(path);
-            if (!comments) return;
-
-            for (const comment of comments) {
-              if (comment.ignore) continue;
-              if (comment.type !== "CommentBlock") continue;
-
-              // if we can't parse the JSDoc comment, warn and continue.
-              let parsedJsdoc: ReturnType<typeof CommentParser.parseComment>;
-              try {
-                parsedJsdoc = CommentParser.parseComment(comment);
-              } catch (err) {
-                console.error("Failed to parse JSDoc comment", comment.value);
-                return;
-              }
-              if (!parsedJsdoc.tags.length) continue;
-
-              // @template
-              (() => {
-                const [templateTypeParams, takeUsedLines] = parseTemplateTags(
-                  comment,
-                  parsedJsdoc
-                );
-                if (!templateTypeParams.length) {
-                  return null;
-                }
-                takeUsedLines();
-                path.node.typeParameters =
-                  types.tsTypeParameterDeclaration(templateTypeParams);
-              })();
-
-              // @returns
-              const returnType = (() => {
-                const returnsTag = parsedJsdoc.tags.find(
-                  (tag) => tag.tag === "returns"
-                );
-                if (!returnsTag) return null;
-
-                let returnType: types.TSType;
-                try {
-                  returnType = parseAsType(returnsTag.type);
-                } catch (err) {
-                  console.error(
-                    "Failed to parse type in @returns tag\n:" + comment.value
-                  );
-                  return null;
-                }
-                // if there's a description, keep the tag.
-                if (!isNonEmptyDescription(returnsTag.description)) {
-                  stripUsedLinesFromComment(comment, parsedJsdoc, [returnsTag]);
-                }
-                return returnType;
-              })();
-              if (returnType) {
-                path.node.returnType = types.tsTypeAnnotation(returnType);
-              }
-
-              // @param and inline @type
-              (() => {
-                const paramTags = parsedJsdoc.tags.filter(
-                  (tag) => tag.tag === "param"
-                );
-
-                const usedLines: typeof paramTags = [];
-
-                const paramTagsByName = new Map(
-                  paramTags
-                    .filter((paramTag) => !isNestedParamName(paramTag.name))
-                    .map((paramTag) => [paramTag.name, paramTag] as const)
-                );
-
-                const [nestedParams, takeNestedParamLines] =
-                  parseNestedParamDeclarations(comment, parsedJsdoc);
-
-                for (const paramPath of path.get("params")) {
-                  const paramLhs = paramPath.isAssignmentPattern()
-                    ? paramPath.get("left")
-                    : paramPath;
-                  const paramIdent = paramLhs.isIdentifier() ? paramLhs : null;
-
-                  // TODO: warn if we get both @type and @param
-                  let paramType: types.TSType | null = null;
-                  if (paramIdent) {
-                    const paramName = paramIdent.node.name;
-                    const tagForParam = paramTagsByName.get(paramName);
-                    if (tagForParam) {
-                      let paramTypeFromParamTag: types.TSType;
-                      try {
-                        paramTypeFromParamTag = parseAsType(tagForParam.type);
-                      } catch (err) {
-                        console.error(
-                          "Failed to parse type in @param tag:\n" +
-                            comment.value
-                        );
-                        return null;
-                      }
-
-                      // if we have some nested `@param {...} paramName.prop` declarations for this param,
-                      // replace the param's type with the object they describe.
-                      const nested = nestedParams?.get(paramName);
-                      if (nested) {
-                        if (
-                          !canTypeHaveNestedProperties(paramTypeFromParamTag)
-                        ) {
-                          console.error(
-                            `a \`@param\` with nested \`@param\` declarations must be of type \`object\` or \`Object\` t\n` +
-                              comment.value
-                          );
-                          return null;
-                        }
-                        paramTypeFromParamTag = types.tsTypeLiteral(nested);
-                      }
-
-                      if (
-                        tagForParam.optional &&
-                        // if the param is assigned a default value, it shouldn't have a `?`
-                        !paramPath.isAssignmentPattern()
-                      ) {
-                        paramPath.node.optional = true;
-                      }
-
-                      // if there's a description or a default annotation, keep the tag.
-                      // TODO: replace the tag with a type-less @param instead
-                      if (
-                        !isNonEmptyDescription(tagForParam.description) &&
-                        !tagForParam.default
-                      ) {
-                        usedLines.push(tagForParam);
-                      } else {
-                        debug?.(tagForParam);
-                      }
-                      paramType = paramTypeFromParamTag;
-                    }
-                  }
-                  // if we didn't get anything from `@param` tags on the function definition, try inline `@type` on the parameter itself.
-                  if (!paramType) {
-                    paramType = extractSimpleTypeFromComments(
-                      paramPath.node.leadingComments
-                    );
-                  }
-
-                  if (paramType) {
-                    const node = paramLhs.node;
-                    if (
-                      // these shouldn't be syntactically valid in a param, but otherwise TS complains
-                      !types.isMemberExpression(node) &&
-                      !types.isTSNonNullExpression(node)
-                    ) {
-                      node.typeAnnotation = types.tsTypeAnnotation(paramType);
-                    }
-                  }
-                }
-                takeNestedParamLines();
-                stripUsedLinesFromComment(comment, parsedJsdoc, usedLines);
-              })();
-            }
+            handleFunction(path);
+          },
+          FunctionExpression(path) {
+            // TODO: this might be incorrect for HOF wrappers like this:
+            //   /** @returns {Blah} */
+            //   const foo = wrap(() => ...)
+            handleFunction(path);
+          },
+          ArrowFunctionExpression(path) {
+            // TODO: this might be incorrect for HOF wrappers like this:
+            //   /** @returns {Blah} */
+            //   const foo = wrap(() => ...)
+            handleFunction(path);
           },
 
           Statement(path) {
@@ -270,6 +128,7 @@ async function main() {
               }
             }
           },
+
           ParenthesizedExpression(path) {
             // cast: `/** @type {Foo} */ (foo)`
             debug?.("ParenthesizedExpression", path.node.leadingComments);
@@ -291,6 +150,166 @@ async function main() {
   let output = generate(result!.ast!).code;
   output = insertForcedLinebreaks(output);
   console.log(output);
+}
+
+function handleFunction(
+  path: NodePath<
+    | types.FunctionDeclaration
+    | types.FunctionExpression
+    | types.ArrowFunctionExpression
+  >
+) {
+  const comments = resolveLeadingComments(path);
+  if (!comments) return;
+
+  for (const comment of comments) {
+    if (comment.ignore) continue;
+    if (comment.type !== "CommentBlock") continue;
+
+    // if we can't parse the JSDoc comment, warn and continue.
+    let parsedJsdoc: ReturnType<typeof CommentParser.parseComment>;
+    try {
+      parsedJsdoc = CommentParser.parseComment(comment);
+    } catch (err) {
+      console.error("Failed to parse JSDoc comment", comment.value);
+      return;
+    }
+    if (!parsedJsdoc.tags.length) continue;
+
+    // @template
+    (() => {
+      const [templateTypeParams, takeUsedLines] = parseTemplateTags(
+        comment,
+        parsedJsdoc
+      );
+      if (!templateTypeParams.length) {
+        return null;
+      }
+      takeUsedLines();
+      path.node.typeParameters =
+        types.tsTypeParameterDeclaration(templateTypeParams);
+    })();
+
+    // @returns
+    const returnType = (() => {
+      const returnsTag = parsedJsdoc.tags.find((tag) => tag.tag === "returns");
+      if (!returnsTag) return null;
+
+      let returnType: types.TSType;
+      try {
+        returnType = parseAsType(returnsTag.type);
+      } catch (err) {
+        console.error(
+          "Failed to parse type in @returns tag\n:" + comment.value
+        );
+        return null;
+      }
+      // if there's a description, keep the tag.
+      if (!isNonEmptyDescription(returnsTag.description)) {
+        stripUsedLinesFromComment(comment, parsedJsdoc, [returnsTag]);
+      }
+      return returnType;
+    })();
+    if (returnType) {
+      path.node.returnType = types.tsTypeAnnotation(returnType);
+    }
+
+    // @param and inline @type
+    (() => {
+      const paramTags = parsedJsdoc.tags.filter((tag) => tag.tag === "param");
+
+      const usedLines: typeof paramTags = [];
+
+      const paramTagsByName = new Map(
+        paramTags
+          .filter((paramTag) => !isNestedParamName(paramTag.name))
+          .map((paramTag) => [paramTag.name, paramTag] as const)
+      );
+
+      const [nestedParams, takeNestedParamLines] = parseNestedParamDeclarations(
+        comment,
+        parsedJsdoc
+      );
+
+      for (const paramPath of path.get("params")) {
+        const paramLhs = paramPath.isAssignmentPattern()
+          ? paramPath.get("left")
+          : paramPath;
+        const paramIdent = paramLhs.isIdentifier() ? paramLhs : null;
+
+        // TODO: warn if we get both @type and @param
+        let paramType: types.TSType | null = null;
+        if (paramIdent) {
+          const paramName = paramIdent.node.name;
+          const tagForParam = paramTagsByName.get(paramName);
+          if (tagForParam) {
+            let paramTypeFromParamTag: types.TSType;
+            try {
+              paramTypeFromParamTag = parseAsType(tagForParam.type);
+            } catch (err) {
+              console.error(
+                "Failed to parse type in @param tag:\n" + comment.value
+              );
+              return null;
+            }
+
+            // if we have some nested `@param {...} paramName.prop` declarations for this param,
+            // replace the param's type with the object they describe.
+            const nested = nestedParams?.get(paramName);
+            if (nested) {
+              if (!canTypeHaveNestedProperties(paramTypeFromParamTag)) {
+                console.error(
+                  `a \`@param\` with nested \`@param\` declarations must be of type \`object\` or \`Object\` t\n` +
+                    comment.value
+                );
+                return null;
+              }
+              paramTypeFromParamTag = types.tsTypeLiteral(nested);
+            }
+
+            if (
+              tagForParam.optional &&
+              // if the param is assigned a default value, it shouldn't have a `?`
+              !paramPath.isAssignmentPattern()
+            ) {
+              paramPath.node.optional = true;
+            }
+
+            // if there's a description or a default annotation, keep the tag.
+            // TODO: replace the tag with a type-less @param instead
+            if (
+              !isNonEmptyDescription(tagForParam.description) &&
+              !tagForParam.default
+            ) {
+              usedLines.push(tagForParam);
+            } else {
+              debug?.(tagForParam);
+            }
+            paramType = paramTypeFromParamTag;
+          }
+        }
+        // if we didn't get anything from `@param` tags on the function definition, try inline `@type` on the parameter itself.
+        if (!paramType) {
+          paramType = extractSimpleTypeFromComments(
+            paramPath.node.leadingComments
+          );
+        }
+
+        if (paramType) {
+          const node = paramLhs.node;
+          if (
+            // these shouldn't be syntactically valid in a param, but otherwise TS complains
+            !types.isMemberExpression(node) &&
+            !types.isTSNonNullExpression(node)
+          ) {
+            node.typeAnnotation = types.tsTypeAnnotation(paramType);
+          }
+        }
+      }
+      takeNestedParamLines();
+      stripUsedLinesFromComment(comment, parsedJsdoc, usedLines);
+    })();
+  }
 }
 
 /** Handles comments that might get attached to a node but don't apply to it. */
@@ -382,8 +401,9 @@ function findEnclosingDeclaration(path: NodePath<types.Node>) {
     if (parentPath.isBlockParent()) {
       return null;
     }
-    // we're enclosed in an export declaration.
-    if (parentPath.isDeclaration()) {
+    // we're enclosed in a declaration.
+    // but if there's another declaration around it, we want to visit that (usually this is `export const ...`)
+    if (parentPath.isDeclaration() && !parentPath.parentPath.isDeclaration()) {
       return parentPath;
     }
     parentPath = parentPath.parentPath;
