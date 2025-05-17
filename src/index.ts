@@ -72,6 +72,12 @@ async function main() {
           },
 
           FunctionDeclaration(path) {
+            // this seems to run before the floating-comments handler in `Statement`,
+            // so we need to make sure we don't steal a @template from a @typedef
+            const comments = resolveLeadingComments(path);
+            if (comments) {
+              handleFloatingComments(path, comments);
+            }
             handleFunction(path);
           },
           FunctionExpression(path) {
