@@ -18,6 +18,12 @@ function genericFunctionDeclaration(a, /** @type {T} */ b) {
 
 //==========================================
 
+function onlyInlineTypes(/** @type {string} */ a, /** @type {number} */ b) {
+  return a + b;
+}
+
+//==========================================
+
 /**
  * @param {string} [a] - the first value.
  * */

@@ -7,6 +7,12 @@ const genericArrowFunction = <T extends Record<string, any>>(a: T, b: T) => {
 
 //==========================================
 
+const onlyInlineTypes = (a: string, b: number) => {
+  return a + b;
+};
+
+//==========================================
+
 /**
  * @param {string} [a] - the first value.
  */

@@ -18,6 +18,15 @@ const genericFunctionExpr = function (a, /** @type {T} */ b) {
 
 //==========================================
 
+const onlyInlineTypes = function (
+  /** @type {string} */ a,
+  /** @type {number} */ b
+) {
+  return a + b;
+};
+
+//==========================================
+
 /**
  * @param {string} [a] - the first value.
  * */

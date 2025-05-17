@@ -7,6 +7,12 @@ function genericFunctionDeclaration<T extends Record<string, any>>(a: T, b: T) {
 
 //==========================================
 
+function onlyInlineTypes(a: string, b: number) {
+  return a + b;
+}
+
+//==========================================
+
 /**
  * @param {string} [a] - the first value.
  */

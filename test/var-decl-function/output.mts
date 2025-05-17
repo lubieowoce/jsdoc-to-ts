@@ -10,6 +10,12 @@ const genericFunctionExpr = function <T extends Record<string, any>>(
 
 //==========================================
 
+const onlyInlineTypes = function (a: string, b: number) {
+  return a + b;
+};
+
+//==========================================
+
 /**
  * @param {string} [a] - the first value.
  */

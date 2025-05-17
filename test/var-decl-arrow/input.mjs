@@ -18,6 +18,12 @@ const genericArrowFunction = (a, /** @type {T} */ b) => {
 
 //==========================================
 
+const onlyInlineTypes = (/** @type {string} */ a, /** @type {number} */ b) => {
+  return a + b;
+};
+
+//==========================================
+
 /**
  * @param {string} [a] - the first value.
  * */
