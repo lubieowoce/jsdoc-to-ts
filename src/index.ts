@@ -64,6 +64,12 @@ async function main() {
         visitor: {
           // TODO: annotated assignments, e.g. module.exports
           // TODO: `@import` -> `import type`
+          Program(path) {
+            const comments = path.node.innerComments;
+            if (!comments) return;
+            handleFloatingComments(path, comments);
+          },
+
           FunctionDeclaration(path) {
             const comments = resolveLeadingComments(path);
             if (!comments) return;
@@ -226,40 +232,7 @@ async function main() {
           Statement(path) {
             const comments = resolveLeadingComments(path);
             if (!comments) return;
-
-            for (const comment of comments) {
-              if (comment.ignore) continue;
-              if (comment.type === "CommentLine") {
-                // remove '@ts-check' comments -- we're converting to typescript, so they're redundant.
-                if (/\s*@ts-check\s*/.test(comment.value)) {
-                  comment.ignore = true;
-                  continue;
-                }
-              } else {
-                // check for JSDoc tags that aren't handled by more specific visitors (i.e. not @type),
-                // because they get attached to random statements that follow them.
-                // if we can't parse the JSDoc comment, warn and continue.
-                let parsedJsdoc: ReturnType<typeof CommentParser.parseComment>;
-                try {
-                  parsedJsdoc = CommentParser.parseComment(comment);
-                } catch (err) {
-                  console.error("Failed to parse JSDoc comment", comment.value);
-                  return;
-                }
-                if (!parsedJsdoc.tags.length) continue;
-
-                const decl = extractTypedef(comment, parsedJsdoc);
-                if (!decl) continue;
-
-                const [inserted] = path.insertBefore(
-                  EXPORT_TYPEDEFS ? types.exportNamedDeclaration(decl) : decl
-                );
-                if (comment.value && !comment.ignore) {
-                  comment.ignore = true;
-                  inserted.addComment("leading", comment.value, false);
-                }
-              }
-            }
+            handleFloatingComments(path, comments);
           },
 
           VariableDeclaration(path) {
@@ -318,6 +291,80 @@ async function main() {
   let output = generate(result!.ast!).code;
   output = insertForcedLinebreaks(output);
   console.log(output);
+}
+
+/** Handles comments that might get attached to a node but don't apply to it. */
+function handleFloatingComments(
+  path: NodePath<types.Node>,
+  comments: types.Comment[]
+) {
+  for (const comment of comments) {
+    if (comment.ignore) continue;
+    if (comment.type === "CommentLine") {
+      // remove '@ts-check' comments -- we're converting to typescript, so they're redundant.
+      if (/\s*@ts-check\s*/.test(comment.value)) {
+        comment.ignore = true;
+        continue;
+      }
+    } else {
+      // check for JSDoc tags that aren't handled by more specific visitors (i.e. not @type),
+      // because they get attached to random statements that follow them.
+      // if we can't parse the JSDoc comment, warn and continue.
+      let parsedJsdoc: ReturnType<typeof CommentParser.parseComment>;
+      try {
+        parsedJsdoc = CommentParser.parseComment(comment);
+      } catch (err) {
+        console.error("Failed to parse JSDoc comment", comment.value);
+        return;
+      }
+      if (!parsedJsdoc.tags.length) continue;
+
+      const decl = extractTypedef(comment, parsedJsdoc);
+      if (!decl) continue;
+
+      // we should only insert an export declaration for types defined at the top level.
+      // types defined within a block should not be exported.
+      const blockParent = path.isProgram() ? path : findBlockParent(path);
+      const shouldAddExport = EXPORT_TYPEDEFS && blockParent.isProgram();
+      const fullDecl = shouldAddExport
+        ? types.exportNamedDeclaration(decl)
+        : decl;
+
+      let insertedDeclPath: NodePath<typeof fullDecl>;
+      if (path.isProgram()) {
+        // we only get comments on the Program itself if there's no other statements/declarations in it,
+        // so we can insert them whenever. push them so that if we have multiple comments, they appear in order.
+        insertedDeclPath = path.pushContainer("body", fullDecl)[0];
+      } else {
+        insertedDeclPath = path.insertBefore(fullDecl)[0];
+      }
+
+      if (comment.value && !comment.ignore) {
+        comment.ignore = true;
+        insertedDeclPath.addComment("leading", comment.value, false);
+      }
+    }
+  }
+}
+
+function findBlockParent(path: NodePath<types.Node>) {
+  // otherwise, we want to ignore the node itself.
+  if (!path.parentPath) {
+    throw new Error(
+      "Invariant: Reached parent-less without finding a block parent"
+    );
+  }
+  path = path.parentPath;
+
+  while (!path.isBlockParent()) {
+    if (!path.parentPath) {
+      throw new Error(
+        "Invariant: Reached parent-less without finding a block parent"
+      );
+    }
+    path = path.parentPath;
+  }
+  return path;
 }
 
 function resolveLeadingComments(path: NodePath<types.Node>) {

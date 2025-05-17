@@ -25,4 +25,3 @@ export type Foo4<
   /** TrailingCommentD (with some more stuff here) */
   D = string,
 > = [A, B, C, D];
-const foo: string | null = null;
