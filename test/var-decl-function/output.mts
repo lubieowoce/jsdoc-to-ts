@@ -1,6 +1,7 @@
 const functionExpr = function (a: number, b: string): string {
   return "foo";
 };
+
 const genericFunctionExpr = function <T extends Record<string, any>>(
   a: T,
   b: T,
@@ -55,16 +56,19 @@ function outer() {
   const inner = function (): string {
     return "foo";
   };
+
   const func: () => string | 0 =
     Math.random() > 0.5
       ? inner
       : function (): 0 {
           return 0;
         };
+
   return func();
 }
 
 //==========================================
+
 export const exportedFunction = function (): string {
   return "foo";
 };

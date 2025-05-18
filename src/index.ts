@@ -29,6 +29,11 @@ async function main() {
   const filePath = path.resolve(rawfilePath);
   const fileContents = fs.readFileSync(filePath, "utf8");
 
+  // HACK: babel strips whitespace. We want to preserve blank lines from the input,
+  // so replace them with a marker comment (which we will remove at the end)
+  // TODO: sourcemap this and pass as `inputSourceMap` to babel
+  const source = markEmptyLines(fileContents);
+
   // TODO: to properly handle things like @typedef, we probably need to categorize JSDoc annotations:
   // - `@typedef {Ty} TypeName` - standalone
   //   - can contain `@template`
@@ -51,7 +56,7 @@ async function main() {
   //   - `@extends {Base<T>}`
   //   - `@implements {SomeInterface}`
 
-  const result = await transformAsync(fileContents, {
+  const result = await transformAsync(source, {
     ast: true,
     filename: filePath,
     parserOpts: {
@@ -152,8 +157,12 @@ async function main() {
       },
     ],
   });
-  let output = generate(result!.ast!).code;
-  output = insertForcedLinebreaks(output);
+
+  // babel doesn't add a trailing newline. this can break our whitespace insertion logic,
+  // because we're matching comments with a newline at the end.
+  let output = generate(result!.ast!).code + "\n";
+
+  output = insertForcedWhitespace(output);
   console.log(output);
 }
 
@@ -385,20 +394,20 @@ function handleFloatingComments(
       const fullDecl = shouldAddExport
         ? types.exportNamedDeclaration(decl)
         : decl;
-      addTrailingForcedLinebreaks(fullDecl, 1);
 
-      let insertedDeclPath: NodePath<typeof fullDecl>;
+      addTrailingEmptyLines(fullDecl);
+      if (comment.value && !comment.ignore) {
+        comment.ignore = true;
+        types.addComment(fullDecl, "leading", comment.value, false);
+      }
+      addLeadingEmptyLines(fullDecl);
+
       if (path.isProgram()) {
         // we only get comments on the Program itself if there's no other statements/declarations in it,
         // so we can insert them whenever. push them so that if we have multiple comments, they appear in order.
-        insertedDeclPath = path.pushContainer("body", fullDecl)[0];
+        path.pushContainer("body", fullDecl)[0];
       } else {
-        insertedDeclPath = path.insertBefore(fullDecl)[0];
-      }
-
-      if (comment.value && !comment.ignore) {
-        comment.ignore = true;
-        insertedDeclPath.addComment("leading", comment.value, false);
+        path.insertBefore(fullDecl)[0];
       }
     }
   }
@@ -665,30 +674,58 @@ function isNonEmptyDescription(description: string) {
 }
 const WHITESPACE_OR_EMPTY = /^\s*$/;
 
-const FORCED_LINEBREAK_MARKER = "__JSDOC_TO_TS_FORCE_LINEBREAK__";
-const FORCED_LINEBREAK_MARKER_COMMENT_PATTERN = new RegExp(
-  String.raw`//${FORCED_LINEBREAK_MARKER}\n?`,
-  "g"
-);
+const EMPTY_LINE_MARKER = "@__JSDOC_TO_TS_EMPTY_LINE__";
+const FORCED_LINEBREAK_MARKER = "@__JSDOC_TO_TS_FORCE_LINEBREAK__";
 
 function addLeadingCommentWithForcedLinebreak(node: types.Node, value: string) {
   types.addComment(node, "leading", FORCED_LINEBREAK_MARKER, true);
   types.addComment(node, "leading", value, false);
 }
 
-function addTrailingForcedLinebreaks(node: types.Node, lines = 0) {
-  // 3 newlines - one gets removed by the regex, second breaks the line, third is extra
-  types.addComment(
-    node,
-    "trailing",
-    FORCED_LINEBREAK_MARKER + "\n\n" + "\n".repeat(lines),
-    true
+function markEmptyLines(source: string): string {
+  // find empty lines (newlines with optional leading whitespace)
+  // note the `m` multiline flag on the regex.
+  const emptyLineComment = "//" + EMPTY_LINE_MARKER + "\n";
+  return source.replaceAll(/(?<=^[ \t]*)\n/gm, emptyLineComment);
+}
+
+function createLineComment(value: string): types.Comment {
+  return {
+    type: "CommentLine",
+    value: value,
+  };
+}
+
+function addLeadingEmptyLines(node: types.Node, lines = 1) {
+  node.leadingComments ??= [];
+  node.leadingComments.unshift(
+    // the first comment goes on the same line as the statement, so add an extra one.
+    ...Array.from({ length: lines + 1 })
+      .fill(null)
+      .map(() => createLineComment(EMPTY_LINE_MARKER))
   );
 }
 
-function insertForcedLinebreaks(code: string) {
-  // using a line comment already forced a line break, so we can strip the line itself.
-  return code.replaceAll(FORCED_LINEBREAK_MARKER_COMMENT_PATTERN, "");
+function addTrailingEmptyLines(node: types.Node, lines = 1) {
+  node.trailingComments ??= [];
+  node.trailingComments.unshift(
+    // the first comment goes on the same line as the statement, so add an extra one.
+    ...Array.from({ length: lines + 1 })
+      .fill(null)
+      .map(() => createLineComment(EMPTY_LINE_MARKER))
+  );
+}
+
+function insertForcedWhitespace(code: string) {
+  return (
+    code
+      .replaceAll(new RegExp(String.raw`//${EMPTY_LINE_MARKER}\n`, "g"), "\n")
+      // using a line comment already forced a line break, so we can strip the whole line.
+      .replaceAll(
+        new RegExp(String.raw`//${FORCED_LINEBREAK_MARKER}\n`, "g"),
+        ""
+      )
+  );
 }
 
 function parseTemplateTags(

@@ -5,6 +5,7 @@ export type Tagged1<T> = T & {
 function afterTypedef1() {
   return 3 as Tagged1<number>;
 }
+
 export type Tagged2<T> = T & {
   __tag?: "tagged";
 };
@@ -24,6 +25,7 @@ function beforeInnerFunctionDecl() {
     return x as InnerTagged<number>;
   }
 }
+
 function beforeInnerArrowFunction() {
   type InnerTagged<T> = T & {
     __tag?: "tagged";
@@ -33,6 +35,7 @@ function beforeInnerArrowFunction() {
     return 3 as InnerTagged<number>;
   };
 }
+
 function beforeInnerFunctionExpr() {
   type InnerTagged<T> = T & {
     __tag?: "tagged";

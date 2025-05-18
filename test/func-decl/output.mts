@@ -1,6 +1,7 @@
 function functionDeclaration(a: number, b: string): string {
   return "foo";
 }
+
 function genericFunctionDeclaration<T extends Record<string, any>>(a: T, b: T) {
   return "foo";
 }
@@ -78,6 +79,7 @@ function takesOptionalObject(
 ) {}
 
 //==========================================
+
 export function exportedFunctionDeclaration(): string {
   return "foo";
 }

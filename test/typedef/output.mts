@@ -4,6 +4,7 @@
 export type Foo = Object;
 
 const DUMMY = 1;
+
 /**
  * A description line at the start.
  */
