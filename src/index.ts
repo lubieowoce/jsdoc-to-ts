@@ -172,7 +172,7 @@ function handleFunction(
   const paramTagsByName = new Map<
     string,
     {
-      comment: types.Comment;
+      comment: types.CommentBlock;
       parsedJsdoc: CommentParser.JsdocBlockWithInline;
       tag: CommentParser.JsdocTagWithInline;
     }
@@ -448,7 +448,7 @@ function findEnclosingDeclaration(path: NodePath<types.Node>) {
 }
 
 function extractTypedef(
-  comment: types.Comment,
+  comment: types.CommentBlock,
   parsedJsdoc: CommentParser.JsdocBlockWithInline
 ): types.TSTypeAliasDeclaration | null {
   const [typeParams, takeTypeParamLines] = parseTemplateTags(
@@ -542,7 +542,7 @@ function canTypeHaveNestedProperties(type: types.TSType) {
 }
 
 function parsePropertyDeclarations(
-  comment: types.Comment,
+  comment: types.CommentBlock,
   parsedJsdoc: CommentParser.JsdocBlockWithInline
 ): [types.TSPropertySignature[], () => void] {
   const propTags = parsedJsdoc.tags.filter(
@@ -582,7 +582,7 @@ function isNestedParamName(name: string) {
 }
 
 function parseNestedParamDeclarations(
-  comment: types.Comment,
+  comment: types.CommentBlock,
   parsedJsdoc: CommentParser.JsdocBlockWithInline
 ): [Map<string, types.TSPropertySignature[]>, () => void] | [null, () => void] {
   const paramTags = parsedJsdoc.tags.filter(
@@ -692,7 +692,7 @@ function insertForcedLinebreaks(code: string) {
 }
 
 function parseTemplateTags(
-  comment: types.Comment,
+  comment: types.CommentBlock,
   parsedJsdoc: CommentParser.JsdocBlockWithInline
 ): [typeParams: types.TSTypeParameter[], takeUsedLines: () => void] {
   // @template T, U, V        // <T, U, V>
@@ -833,7 +833,7 @@ function extractSimpleTypeFromComments(
 }
 
 function stripUsedLinesFromComment(
-  comment: types.Comment,
+  comment: types.CommentBlock,
   parsedJsdoc: CommentParser.JsdocBlockWithInline,
   usedLines: CommentParser.JsdocTagWithInline[]
 ) {
