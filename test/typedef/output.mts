@@ -1,9 +1,49 @@
 /**
- * This is some kind of description
+ * This is a top level type
  */
 export type Foo = Object;
 
-const DUMMY = 1;
+{
+  /**
+   * No other statements
+   *
+   * This should not conflict with the outer Foo,
+   * because it's defined in a block scope
+   */
+  type Foo = Object;
+}
+
+{
+  /**
+   * Leading comment
+   *
+   * This should not conflict with the outer Foo,
+   * because it's defined in a block scope
+   */
+  type Foo = Object;
+
+  const DUMMY = 1;
+}
+
+{
+  const DUMMY = 1;
+
+  /**
+   * Trailing comment
+   *
+   * This should also not conflict with the outer Foo,
+   * because it's defined in a block scope
+   */
+  type Foo = Object;
+}
+
+if (true) {
+  /**
+   * This should also not conflict with the outer Foo,
+   * because it's defined in an if
+   */
+  type Foo = Object;
+}
 
 /**
  * A description line at the start.
@@ -24,5 +64,3 @@ export type SpecialType = {
    */
   prop5?: number;
 };
-
-const DUMMY2 = 1;

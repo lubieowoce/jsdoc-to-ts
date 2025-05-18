@@ -70,10 +70,61 @@ async function main() {
           // TODO: annotated assignments, e.g. module.exports
           // TODO: `@import` -> `import type`
           // TODO: `@this`
-          Program(path) {
-            const comments = path.node.innerComments;
-            if (!comments) return;
-            handleFloatingComments(path, comments);
+          Block(path) {
+            if (path.node.leadingComments) {
+              handleFloatingComments(
+                path.node.leadingComments,
+                path,
+                // leading floating comments belong to the parent block.
+                path.isProgram() ? path : findBlockParent(path),
+                (decl) => {
+                  if (path.isProgram()) {
+                    // this doesn't really happen:
+                    // - if a program contains statements/declarations, comments will get attached to those
+                    // - if it's empty, we'll get the comment in `innerComments` and handle them below
+                    // but technically it'd make sense to do this, so we can have this codepath here
+                    // in case babel changes behavior around this or something
+                    path.unshiftContainer("body", decl);
+                  } else {
+                    // if the leading comments contain typedefs, we should insert those into the parent, not the block itself.
+                    path.insertBefore(decl);
+                  }
+                }
+              );
+            }
+
+            // a module (or block) can consist of only comments.
+            // in that case, no other visitors will be triggered, so handle them here.
+            if (path.node.innerComments) {
+              handleFloatingComments(
+                path.node.innerComments,
+                path,
+                path,
+                (decl) => {
+                  // use push to preserve insertion order.
+                  path.pushContainer("body", decl);
+                }
+              );
+            }
+
+            // comments that occur after the last block item will be attached to it as trailing comments.
+            // other visitors only look at leading comments, so we need to handle those.
+            // (the above sections will insert type definitions before their items,
+            //  so we know that this isn't a type declaration inserted by us)
+            if (path.node.body.length > 0) {
+              const lastIndex = path.node.body.length - 1;
+              const lastPath = path.get(`body.${lastIndex}`);
+              if (lastPath.node.trailingComments) {
+                handleFloatingComments(
+                  lastPath.node.trailingComments,
+                  path,
+                  path,
+                  (decl) => {
+                    path.pushContainer("body", decl);
+                  }
+                );
+              }
+            }
           },
 
           FunctionDeclaration(path) {
@@ -81,7 +132,7 @@ async function main() {
             // so we need to make sure we don't steal a @template from a @typedef
             const comments = resolveLeadingComments(path);
             if (comments) {
-              handleFloatingComments(path, comments);
+              handleFloatingComments(comments, path, findBlockParent(path));
             }
             handleFunction(path);
           },
@@ -101,7 +152,7 @@ async function main() {
           Statement(path) {
             const comments = resolveLeadingComments(path);
             if (!comments) return;
-            handleFloatingComments(path, comments);
+            handleFloatingComments(comments, path, findBlockParent(path));
           },
 
           VariableDeclaration(path) {
@@ -360,8 +411,10 @@ function handleFunction(
 
 /** Handles comments that might get attached to a node but don't apply to it. */
 function handleFloatingComments(
+  comments: types.Comment[],
   path: NodePath<types.Node>,
-  comments: types.Comment[]
+  container: NodePath<types.BlockParent>,
+  insertDeclaration?: (decl: types.Declaration) => void
 ) {
   for (const comment of comments) {
     if (comment.ignore) continue;
@@ -389,8 +442,8 @@ function handleFloatingComments(
 
       // we should only insert an export declaration for types defined at the top level.
       // types defined within a block should not be exported.
-      const blockParent = path.isProgram() ? path : findBlockParent(path);
-      const shouldAddExport = EXPORT_TYPEDEFS && blockParent.isProgram();
+      const shouldAddExport = EXPORT_TYPEDEFS && container.isProgram();
+
       const fullDecl = shouldAddExport
         ? types.exportNamedDeclaration(decl)
         : decl;
@@ -402,12 +455,10 @@ function handleFloatingComments(
       }
       addLeadingEmptyLines(fullDecl);
 
-      if (path.isProgram()) {
-        // we only get comments on the Program itself if there's no other statements/declarations in it,
-        // so we can insert them whenever. push them so that if we have multiple comments, they appear in order.
-        path.pushContainer("body", fullDecl)[0];
+      if (insertDeclaration) {
+        insertDeclaration(fullDecl);
       } else {
-        path.insertBefore(fullDecl)[0];
+        path.insertBefore(fullDecl);
       }
     }
   }
